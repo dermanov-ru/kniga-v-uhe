@@ -1,0 +1,6 @@
+build/
+build-device/
+out/
+*.xcodeproj/
+*.ipa
+.DS_Store
