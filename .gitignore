@@ -13,6 +13,11 @@ ios/out/
 ios/*.xcodeproj/
 ios/.swiftpm/
 
+# Подпись: ключ и пароли к нему в репозитории не место
+android/keystore.properties
+*.jks
+*.keystore
+
 # Сборки
 *.apk
 *.aab
