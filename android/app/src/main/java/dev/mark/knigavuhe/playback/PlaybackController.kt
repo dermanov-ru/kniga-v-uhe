@@ -45,6 +45,13 @@ class PlaybackController(
     private var ticker: Job? = null
     private var retriedAfterRefresh = false
 
+    /**
+     * Пока книга подменяется, состояние рассогласовано: плеер уже переключён, а `bookId`
+     * в состоянии ещё прежний. Сохранения в это окно писали бы чужую главу в строку
+     * старой книги и обнуляли её позицию.
+     */
+    private var switching = false
+
     val player: ExoPlayer by lazy {
         ExoPlayer.Builder(context)
             .setAudioAttributes(
@@ -125,8 +132,14 @@ class PlaybackController(
             acc += chapter.durationMs
         }
 
+        // Дописываем позицию прошлой книги, пока состояние ещё согласовано.
+        if (_state.value.bookId != null && _state.value.bookId != bookId) {
+            flushProgress()
+        }
+
         val items = loaded.map { chapter -> mediaItem(book.id, book.title, book.authors, book.cover, chapter) }
         withContext(Dispatchers.Main) {
+            switching = true
             retriedAfterRefresh = false
             _state.value = _state.value.copy(finishedBookId = null)
             player.setMediaItems(items, index, targetPosition)
@@ -146,6 +159,7 @@ class PlaybackController(
                 speed = speed,
                 speedLevels = book.speedLevels.split(",").mapNotNull { it.toFloatOrNull() },
             )
+            switching = false
             pushState()
             startTicker()
         }
@@ -292,17 +306,27 @@ class PlaybackController(
     }
 
     fun saveProgress() {
+        if (switching) return
+        scope.launch { flushProgress() }
+    }
+
+    /**
+     * Пишет позицию и ждёт записи. Книга, её список глав и показания плеера снимаются вместе:
+     * глава обязана принадлежать той самой книге, иначе сохранение пропускается.
+     */
+    private suspend fun flushProgress() {
         val bookId = _state.value.bookId ?: return
-        scope.launch {
-            val snapshot = withContext(Dispatchers.Main) {
-                Triple(
-                    player.currentMediaItem?.mediaId?.toIntOrNull() ?: 0,
-                    player.currentPosition,
-                    player.playbackParameters.speed,
-                )
-            }
-            val (chapterId, position, speed) = snapshot
-            if (chapterId != 0) repo.saveProgress(bookId, chapterId, position, speed)
+        val known = chapters
+        val snapshot = withContext(Dispatchers.Main) {
+            Triple(
+                player.currentMediaItem?.mediaId?.toIntOrNull() ?: 0,
+                player.currentPosition,
+                player.playbackParameters.speed,
+            )
+        }
+        val (chapterId, position, speed) = snapshot
+        if (belongsToBook(chapterId, bookId, known)) {
+            repo.saveProgress(bookId, chapterId, position, speed)
         }
     }
 
@@ -333,5 +357,12 @@ class PlaybackController(
     companion object {
         const val SKIP_BACK_MS = 10_000L
         const val SKIP_FORWARD_MS = 30_000L
+
+        /**
+         * Защита от записи чужой главы: при подмене книги плеер успевает переключиться раньше,
+         * чем обновится состояние, и позиция уходила не в ту строку.
+         */
+        fun belongsToBook(chapterId: Int, bookId: Int, chapters: List<ChapterEntity>): Boolean =
+            chapterId != 0 && chapters.any { it.id == chapterId && it.bookId == bookId }
     }
 }

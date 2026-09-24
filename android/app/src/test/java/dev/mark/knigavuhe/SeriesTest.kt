@@ -191,3 +191,51 @@ class NextInSeriesTest {
         assertNull(dev.mark.knigavuhe.data.repo.BookRepository.pickNext(cycle, currentIndex = 0))
     }
 }
+
+class ProgressOwnershipTest {
+
+    private fun chapter(id: Int, bookId: Int) = dev.mark.knigavuhe.data.db.ChapterEntity(
+        id = id,
+        bookId = bookId,
+        position = 0,
+        title = "глава $id",
+        url = "https://s8.knigavuhe.org/1/audio/$bookId/h/$id.mp3",
+        durationMs = 300_000,
+    )
+
+    private val bookA = listOf(chapter(11, 1), chapter(12, 1))
+
+    @Test
+    fun `saves a chapter that belongs to the book`() {
+        assertTrue(
+            dev.mark.knigavuhe.playback.PlaybackController.belongsToBook(11, bookId = 1, chapters = bookA)
+        )
+    }
+
+    @Test
+    fun `refuses a chapter from another book`() {
+        // Ровно этот случай ломал позицию: при переключении плеер уже отдавал главу новой книги,
+        // а запись уходила в строку прежней.
+        assertEquals(
+            false,
+            dev.mark.knigavuhe.playback.PlaybackController.belongsToBook(99, bookId = 1, chapters = bookA)
+        )
+    }
+
+    @Test
+    fun `refuses when the chapter list is already swapped to another book`() {
+        val bookB = listOf(chapter(21, 2), chapter(22, 2))
+        assertEquals(
+            false,
+            dev.mark.knigavuhe.playback.PlaybackController.belongsToBook(21, bookId = 1, chapters = bookB)
+        )
+    }
+
+    @Test
+    fun `refuses an empty chapter id`() {
+        assertEquals(
+            false,
+            dev.mark.knigavuhe.playback.PlaybackController.belongsToBook(0, bookId = 1, chapters = bookA)
+        )
+    }
+}
