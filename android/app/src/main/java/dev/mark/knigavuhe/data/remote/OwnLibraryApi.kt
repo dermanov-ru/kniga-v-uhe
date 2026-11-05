@@ -82,12 +82,13 @@ class OwnLibraryException(val code: Int, message: String) : IOException(message)
 class OwnLibraryApi(private val client: OkHttpClient = Http.client) {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true; coerceInputValues = true }
 
+    // Сервер отдаёт обложку относительной ссылкой: картинку грузит Coil, которому нужен полный адрес.
     suspend fun books(conn: OwnConnection): List<OwnBook> = withContext(Dispatchers.IO) {
-        parseBooks(get(conn, "/v1/library/books"))
+        parseBooks(get(conn, "/v1/library/books")).map { it.copy(cover = it.cover?.let(conn::absolute)) }
     }
 
     suspend fun manifest(conn: OwnConnection, bookId: String): OwnBook = withContext(Dispatchers.IO) {
-        parseManifest(get(conn, "/v1/library/books/$bookId/manifest"))
+        parseManifest(get(conn, "/v1/library/books/$bookId/manifest")).let { it.copy(cover = it.cover?.let(conn::absolute)) }
     }
 
     fun parseBooks(raw: String): List<OwnBook> = json.decodeFromString(raw)

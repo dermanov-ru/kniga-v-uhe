@@ -1,6 +1,11 @@
 package dev.mark.knigavuhe.ui.player
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -94,13 +99,9 @@ fun PlayerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
             return@Scaffold
         }
 
-        Column(
-            modifier = Modifier.padding(padding).fillMaxSize().padding(horizontal = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Spacer(Modifier.height(16.dp))
-            Cover(state.cover, modifier = Modifier.size(240.dp), corner = 16.dp)
-            Spacer(Modifier.height(20.dp))
+        // Горизонтально обложка встаёт слева по высоте экрана, кнопки справа; иначе в столбик.
+        // Прокрутка — чтобы на низком экране кнопки не уходили за край.
+        val controls: @Composable ColumnScope.() -> Unit = {
             Text(
                 state.chapterTitle,
                 style = MaterialTheme.typography.titleMedium,
@@ -195,6 +196,37 @@ fun PlayerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
             state.error?.let {
                 Spacer(Modifier.height(12.dp))
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+        BoxWithConstraints(Modifier.padding(padding).fillMaxSize()) {
+            if (maxWidth > maxHeight) {
+                val coverSize = minOf(maxHeight - 32.dp, 280.dp)
+                Row(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(32.dp),
+                ) {
+                    Cover(state.cover, modifier = Modifier.size(coverSize), corner = 16.dp)
+                    Column(
+                        modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Spacer(Modifier.height(8.dp))
+                        controls()
+                    }
+                }
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Spacer(Modifier.height(16.dp))
+                    Cover(state.cover, modifier = Modifier.size(240.dp), corner = 16.dp)
+                    Spacer(Modifier.height(20.dp))
+                    controls()
+                }
             }
         }
     }
