@@ -40,3 +40,12 @@ sealed interface SleepOption {
         val presets = listOf(Minutes(15), Minutes(30), Minutes(45), Minutes(60), EndOfChapter)
     }
 }
+
+/** «Сейчас играет на X. Остановить там и продолжить здесь?» — ждёт ответа в приложении. */
+data class AskClaim(
+    val bookId: Int,
+    val book: String,
+    val device: String,
+    val chapterId: Int?,
+    val positionMs: Long?,
+)

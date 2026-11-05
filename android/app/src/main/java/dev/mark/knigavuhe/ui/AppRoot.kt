@@ -107,6 +107,13 @@ fun AppRoot(incomingLink: String?, onLinkHandled: () -> Unit) {
             }
     }
 
+    // Синхронизация прослушивания: тосты «Продолжаю с места на …» и вопрос про другое устройство
+    val askClaim by container.playback.ask.collectAsStateWithLifecycle()
+    val toastContext = LocalContext.current
+    LaunchedEffect(Unit) {
+        container.playback.toasts.collect { android.widget.Toast.makeText(toastContext, it, android.widget.Toast.LENGTH_LONG).show() }
+    }
+
     // Restore the last book into the player on a cold start, paused and ready for one tap.
     LaunchedEffect(Unit) { playerViewModel.restoreIfEmpty() }
 
@@ -241,6 +248,16 @@ fun AppRoot(incomingLink: String?, onLinkHandled: () -> Unit) {
                     }
                 }
         }
+    }
+
+    askClaim?.let { ask ->
+        AlertDialog(
+            onDismissRequest = { container.playback.answerAsk(false) },
+            title = { Text("Книга уже играет") },
+            text = { Text("Сейчас играет на ${ask.device}. Остановить там и продолжить здесь?") },
+            confirmButton = { TextButton(onClick = { container.playback.answerAsk(true) }) { Text("Да") } },
+            dismissButton = { TextButton(onClick = { container.playback.answerAsk(false) }) { Text("Нет") } },
+        )
     }
 
     nextUp?.let { card ->

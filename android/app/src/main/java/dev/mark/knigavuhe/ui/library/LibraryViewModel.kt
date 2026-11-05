@@ -54,13 +54,14 @@ class LibraryViewModel(private val container: AppContainer) : ViewModel() {
     fun continueLast(onOpen: (Int) -> Unit) {
         viewModelScope.launch {
             val last = container.bookRepository.lastPlayed() ?: return@launch
-            container.playback.open(last.bookId, last.chapterId, last.positionMs, play = true)
+            // без chapterId: своя книга пройдёт проверку места на сервере, knigavuhe — сохранённое место
+            container.playback.startPlay(last.bookId)
             onOpen(last.bookId)
         }
     }
 
     fun play(bookId: Int) {
-        viewModelScope.launch { container.playback.open(bookId, play = true) }
+        viewModelScope.launch { container.playback.startPlay(bookId) }
     }
 
     fun delete(bookId: Int) {

@@ -11,6 +11,14 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.common.ForwardingPlayer
+import dev.mark.knigavuhe.data.remote.ClaimBody
+import dev.mark.knigavuhe.sync.ListenRules
+import dev.mark.knigavuhe.sync.ListenSync
+import dev.mark.knigavuhe.sync.PlayAction
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import dev.mark.knigavuhe.data.db.ChapterEntity
 import dev.mark.knigavuhe.data.remote.OwnIds
 import dev.mark.knigavuhe.data.repo.BookRepository
@@ -55,6 +63,129 @@ class PlaybackController(
     }
     val state: StateFlow<PlaybackUiState> = _state.asStateFlow()
 
+    // ---------- синхронизация прослушивания своих книг ----------
+
+    private var listen: ListenSync? = null
+    /** Серверный id своей книги в плеере; у knigavuhe — null. */
+    private var serverBook: String? = null
+    private var sinceTick = 0
+
+    private val _toasts = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    /** Короткие сообщения для тоста: «Продолжаю с места на …». */
+    val toasts: SharedFlow<String> = _toasts.asSharedFlow()
+
+    private val _ask = MutableStateFlow<AskClaim?>(null)
+    /** Своя книга играет на другом устройстве — спросить, перехватывать ли. */
+    val ask: StateFlow<AskClaim?> = _ask.asStateFlow()
+
+    fun attachListen(sync: ListenSync) {
+        listen = sync
+        sync.onStop = { book, by -> stoppedElsewhere(book, by) }
+    }
+
+    /** Событие прослушивания своей книги — в очередь (и на сервер, когда получится). */
+    private fun emit(kind: String) {
+        val sync = listen ?: return
+        val book = serverBook ?: return
+        val chapter = chapters.getOrNull(player.currentMediaItemIndex) ?: return
+        sync.record(book, chapter.position, player.currentPosition, player.playbackParameters.speed, kind)
+    }
+
+    /** Другое устройство забрало книгу: пауза и подсказка в плеере. */
+    private suspend fun stoppedElsewhere(book: String, by: String) {
+        withContext(Dispatchers.Main) {
+            if (serverBook != book) return@withContext
+            if (player.isPlaying) player.pause()
+            _state.value = _state.value.copy(notice = "Слушание продолжилось на $by")
+        }
+    }
+
+    /**
+     * «Играть» с проверкой места на сервере (только свои книги, ответ не дольше 2 с).
+     * chapterId != null — человек выбрал главу сам (explicit): на чужое место не прыгаем.
+     */
+    suspend fun startPlay(bookId: Int, chapterId: Int? = null, positionMs: Long? = null) {
+        val sync = listen
+        val book = if (OwnIds.isOwn(bookId)) repo.book(bookId)?.path?.let(OwnIds::fromPath) else null
+        if (sync == null || book == null || !sync.connected) return playLocal(bookId, chapterId, positionMs)
+        val explicit = chapterId != null
+        when (val action = ListenRules.decide(sync.where(book), explicit)) {
+            PlayAction.Local -> playLocal(bookId, chapterId, positionMs)
+            is PlayAction.Jump -> jumpTo(bookId, action.n, action.posMs,
+                "Продолжаю с места на ${action.device} — глава ${action.n}, ${ListenRules.clock(action.posMs)}")
+            is PlayAction.Ask -> _ask.value = AskClaim(bookId, book, action.device, chapterId, positionMs)
+        }
+    }
+
+    /** Ответ на «Сейчас играет на X. Остановить там и продолжить здесь?». «Нет» — ничего не делаем. */
+    fun answerAsk(yes: Boolean) {
+        val ask = _ask.value ?: return
+        _ask.value = null
+        if (!yes) return
+        scope.launch {
+            val explicit = ask.chapterId != null
+            val body = if (explicit) {
+                val ch = repo.chapters(ask.bookId).firstOrNull { it.id == ask.chapterId }
+                ClaimBody(n = ch?.position, pos_ms = ask.positionMs ?: 0L, speed = _state.value.speed)
+            } else ClaimBody(speed = _state.value.speed)
+            val reply = listen?.claim(ask.book, body)
+            when {
+                reply == null -> {
+                    _toasts.tryEmit("Не удалось связаться с сервером — играю со своего места")
+                    playLocal(ask.bookId, ask.chapterId, ask.positionMs)
+                }
+                explicit -> playLocal(ask.bookId, ask.chapterId, ask.positionMs)
+                else -> jumpTo(ask.bookId, reply.n, reply.pos_ms, null)
+            }
+        }
+    }
+
+    private suspend fun playLocal(bookId: Int, chapterId: Int?, positionMs: Long?) {
+        val resume = chapterId == null && positionMs == null && _state.value.bookId == bookId &&
+            withContext(Dispatchers.Main) { player.mediaItemCount > 0 }
+        if (!resume) return open(bookId, chapterId, positionMs, play = true)
+        withContext(Dispatchers.Main) {
+            if (player.playbackState == Player.STATE_ENDED && player.hasNextMediaItem()) player.seekToNextMediaItem()
+            _state.value = _state.value.copy(notice = null)
+            startSessionHost()
+            player.play()
+        }
+    }
+
+    /** Прыжок на главу n (номер на сервере). Глава у нас не готова — синк, потом ближайшая готовая назад. */
+    private suspend fun jumpTo(bookId: Int, n: Int, posMs: Long, toast: String?) {
+        var target = ListenRules.resolve(repo.chapters(bookId), n)
+        if (target == null || target.second) {
+            runCatching { requestOwnSync?.invoke() }
+            target = ListenRules.resolve(repo.chapters(bookId), n) ?: return playLocal(bookId, null, null)
+        }
+        val (chapter, fallback) = target
+        if (fallback) {
+            _toasts.tryEmit("Глава $n у вас ещё не готова — продолжаю с главы ${chapter.position}")
+            open(bookId, chapter.id, 0L, play = true)
+        } else {
+            toast?.let { _toasts.tryEmit(it) }
+            open(bookId, chapter.id, posMs, play = true)
+        }
+    }
+
+    /**
+     * Плеер для MediaSession: «Играть» с гарнитуры и из уведомления идёт через ту же проверку.
+     * Если нужно спросить, а экрана нет — звук не включается, вопрос ждёт в приложении.
+     */
+    val sessionPlayer: Player by lazy {
+        object : ForwardingPlayer(player) {
+            override fun play() {
+                val bookId = _state.value.bookId
+                if (bookId == null || !OwnIds.isOwn(bookId) || listen?.connected != true) {
+                    super.play()
+                } else {
+                    scope.launch { startPlay(bookId) }
+                }
+            }
+        }
+    }
+
     /** Главы в плеере (у своей книги — только непрерывный блок готовых). */
     private var chapters: List<ChapterEntity> = emptyList()
     /** Все главы книги и где в них начинается блок плеера: для номера главы и времени от начала книги. */
@@ -93,10 +224,14 @@ class PlaybackController(
     private val listener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             pushState()
+            if (!switching) emit(if (isPlaying) "play" else "pause")
+            val book = serverBook
+            if (isPlaying && book != null) listen?.startControl(book) else listen?.stopControl()
             if (isPlaying) startTicker() else saveProgress()
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            if (!switching && reason != Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) emit("chapter")
             saveProgress()
             pushState()
             if (sleepEndOfChapter && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
@@ -161,6 +296,7 @@ class PlaybackController(
         val index = fullIndex - block.first
 
         allChapters = loaded
+        serverBook = if (OwnIds.isOwn(bookId)) OwnIds.fromPath(book.path) else null
         blockStart = block.first
         chapters = loaded.subList(block.first, block.last + 1).toList()
         chapterOffsets = LongArray(loaded.size)
@@ -249,6 +385,10 @@ class PlaybackController(
         }
         if (player.isPlaying) {
             player.pause()
+        } else if (serverBook != null && listen?.connected == true) {
+            // своя книга: перед «Играть» — где её слушали последний раз и не играет ли она где-то ещё
+            val bookId = _state.value.bookId ?: return
+            scope.launch { startPlay(bookId) }
         } else {
             // Своя книга дослушана до неготовой главы, а синк уже принёс её — продолжаем с неё
             if (player.playbackState == Player.STATE_ENDED && player.hasNextMediaItem()) player.seekToNextMediaItem()
@@ -293,6 +433,7 @@ class PlaybackController(
 
     fun seekTo(positionMs: Long) {
         player.seekTo(positionMs)
+        emit("seek")
         pushState()
     }
 
@@ -303,6 +444,7 @@ class PlaybackController(
         } else {
             player.seekTo(target)
         }
+        emit("seek")
         pushState()
     }
 
@@ -412,6 +554,11 @@ class PlaybackController(
                     sinceSave = 0
                     saveProgress()
                 }
+                // своя книга: раз в минуту место уходит на сервер
+                if (++sinceTick >= TICK_SECONDS) {
+                    sinceTick = 0
+                    withContext(Dispatchers.Main) { if (player.isPlaying) emit("tick") }
+                }
                 delay(1_000)
                 if (!withContext(Dispatchers.Main) { player.isPlaying }) break
             }
@@ -465,6 +612,8 @@ class PlaybackController(
     }
 
     fun release() {
+        emit("stop")
+        listen?.stopControl()
         ticker?.cancel()
         sleepJob?.cancel()
         player.release()
@@ -474,6 +623,7 @@ class PlaybackController(
         const val SKIP_BACK_MS = 10_000L
         const val SKIP_FORWARD_MS = 30_000L
         const val NEXT_NOT_READY = "Следующая глава ещё озвучивается"
+        const val TICK_SECONDS = 60
         private const val WAIT_SYNC_MS = 20_000L
         const val CHAPTER_NOT_READY = "Глава ещё озвучивается"
 

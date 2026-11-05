@@ -77,3 +77,19 @@ data class PlaybackStateEntity(
     val speed: Float = 1f,
     val updatedAt: Long = 0,
 )
+
+/**
+ * Очередь событий прослушивания своих книг: пишется всегда, в том числе без сети, уходит на
+ * сервер пачкой; подтверждённые seq удаляются. seq растёт на устройстве (AUTOINCREMENT).
+ */
+@Entity(tableName = "listen_events")
+data class ListenEventEntity(
+    @PrimaryKey(autoGenerate = true) val seq: Long = 0,
+    val book: String,
+    val n: Int,
+    val posMs: Long,
+    val speed: Float,
+    val kind: String,
+    /** мс по часам устройства в момент события */
+    val at: Long,
+)

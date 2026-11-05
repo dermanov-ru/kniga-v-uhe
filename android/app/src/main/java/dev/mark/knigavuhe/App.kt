@@ -7,6 +7,7 @@ import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import dev.mark.knigavuhe.download.Notifications
 import dev.mark.knigavuhe.sync.OwnSync
+import kotlinx.coroutines.launch
 
 class App : Application(), SingletonImageLoader.Factory {
     lateinit var container: AppContainer
@@ -19,6 +20,8 @@ class App : Application(), SingletonImageLoader.Factory {
         // «Моя библиотека»: синк при старте и фоном раз в 15 минут (без подключения — ничего)
         OwnSync.schedule(this)
         container.ownSync.syncSoon(force = true)
+        // события прослушивания, накопленные без сети, — на сервер
+        kotlinx.coroutines.MainScope().launch { container.listen.flush() }
     }
 
     /** Covers come from the same host as the audio, so they ride the shared OkHttp client. */

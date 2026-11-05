@@ -38,6 +38,6 @@ class FavoritesViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun play(bookId: Int) {
-        viewModelScope.launch { container.playback.open(bookId, play = true) }
+        viewModelScope.launch { container.playback.startPlay(bookId) }
     }
 }

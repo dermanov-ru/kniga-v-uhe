@@ -141,3 +141,18 @@ interface PlaybackDao {
     @Query("DELETE FROM playback_state WHERE bookId = :bookId")
     suspend fun delete(bookId: Int)
 }
+
+@Dao
+interface ListenEventDao {
+    @Insert
+    suspend fun insert(event: ListenEventEntity): Long
+
+    @Query("SELECT * FROM listen_events ORDER BY seq LIMIT :limit")
+    suspend fun pending(limit: Int): List<ListenEventEntity>
+
+    @Query("SELECT COUNT(*) FROM listen_events")
+    suspend fun count(): Int
+
+    @Query("DELETE FROM listen_events WHERE seq IN (:seqs)")
+    suspend fun delete(seqs: List<Long>)
+}

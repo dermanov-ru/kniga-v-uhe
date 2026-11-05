@@ -118,12 +118,24 @@ fun BookScreen(
         val own = viewModel.isOwn
         val context = LocalContext.current
         LaunchedEffect(own) { viewModel.pollOwn() }
+        LaunchedEffect(own) { viewModel.loadLastListen() }
+        val lastListen by viewModel.lastListen.collectAsStateWithLifecycle()
 
         LazyColumn(
             modifier = Modifier.padding(padding).fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
         ) {
             if (own) {
+                lastListen?.let { line ->
+                    item {
+                        Text(
+                            line,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                }
                 ownStatus(book, state.chapters)?.let { status ->
                     item {
                         Text(

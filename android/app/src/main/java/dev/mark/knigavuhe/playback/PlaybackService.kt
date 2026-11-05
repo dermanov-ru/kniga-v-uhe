@@ -29,7 +29,8 @@ class PlaybackService : MediaSessionService() {
                 .apply { setSmallIcon(R.drawable.ic_stat_book) }
         )
 
-        session = MediaSession.Builder(this, controller.player)
+        // через sessionPlayer «Играть» с гарнитуры проходит ту же проверку места, что и кнопка в приложении
+        session = MediaSession.Builder(this, controller.sessionPlayer)
             .setSessionActivity(openAppIntent())
             .build()
             // onGetSession only fires when a MediaController connects. Nothing in this app

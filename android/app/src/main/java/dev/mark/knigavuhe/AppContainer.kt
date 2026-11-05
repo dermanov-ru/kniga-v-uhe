@@ -8,7 +8,9 @@ import dev.mark.knigavuhe.data.remote.OwnLibraryApi
 import dev.mark.knigavuhe.data.repo.BookRepository
 import dev.mark.knigavuhe.data.repo.Settings
 import dev.mark.knigavuhe.playback.PlaybackController
+import dev.mark.knigavuhe.sync.ListenSync
 import dev.mark.knigavuhe.sync.OwnSync
+import dev.mark.knigavuhe.data.remote.ListenApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import okhttp3.OkHttpClient
@@ -26,7 +28,11 @@ class AppContainer(context: Context) {
     val playback = PlaybackController(appContext, bookRepository, appScope)
     val ownSync = OwnSync(appContext, db, bookRepository, settings, appScope) { playback.ownChaptersChanged() }
 
+    /** Синхронизация прослушивания своих книг между устройствами. */
+    val listen = ListenSync(appContext, db, ListenApi(http), settings, appScope)
+
     init {
         playback.requestOwnSync = { ownSync.sync(force = true) }
+        playback.attachListen(listen)
     }
 }

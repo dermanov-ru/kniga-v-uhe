@@ -73,6 +73,19 @@ class BookViewModel(
 
     val isOwn: Boolean get() = OwnIds.isOwn(bookId)
 
+    private val _lastListen = MutableStateFlow<String?>(null)
+    /** «Последний раз: Huawei P30 · глава 5, 12:40 · сегодня 21:10» — только у своих книг. */
+    val lastListen: StateFlow<String?> = _lastListen.asStateFlow()
+
+    fun loadLastListen() {
+        if (!isOwn) return
+        viewModelScope.launch {
+            val book = container.bookRepository.book(bookId)?.path?.let(OwnIds::fromPath) ?: return@launch
+            val where = container.listen.last(book) ?: return@launch
+            _lastListen.value = where.state?.let { dev.mark.knigavuhe.sync.ListenRules.lastLine(it, where.me) }
+        }
+    }
+
     /** «Скачать»: у своей книги ещё и флаг — новые готовые главы догружаются при синке. */
     fun download() {
         viewModelScope.launch {
@@ -105,11 +118,10 @@ class BookViewModel(
             val chapter = chapterIndex?.let { state.value.chapters.getOrNull(it) }
             if (chapter != null && !chapter.isPlayable) return@launch
             val chapterId = chapter?.id
-            container.playback.open(
+            container.playback.startPlay(
                 bookId = bookId,
                 chapterId = chapterId,
                 positionMs = if (chapterIndex != null) 0L else null,
-                play = true,
             )
         }
     }
