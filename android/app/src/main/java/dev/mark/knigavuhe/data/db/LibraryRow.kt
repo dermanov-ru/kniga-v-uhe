@@ -21,7 +21,13 @@ data class LibraryRow(
     val seriesName: String? = null,
     val seriesIndex: Int = 0,
     val seriesTotal: Int = 0,
+    /** Своя книга: состояние озвучки и сколько глав уже готово на сервере. */
+    val remoteState: String? = null,
+    val remoteReady: Int = 0,
 ) {
+    val voicing: Boolean get() = remoteState == "queued" || remoteState == "running"
+    val voicingProgress: Float get() = if (chapterCount > 0) remoteReady.toFloat() / chapterCount else 0f
+
     val elapsedMs: Long get() = (elapsedBeforeMs ?: 0L) + (positionMs ?: 0L)
     val leftMs: Long get() = (totalDurationMs - elapsedMs).coerceAtLeast(0)
     val started: Boolean get() = updatedAt != null

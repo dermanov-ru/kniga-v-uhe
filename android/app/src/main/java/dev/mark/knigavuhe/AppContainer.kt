@@ -8,6 +8,7 @@ import dev.mark.knigavuhe.data.remote.OwnLibraryApi
 import dev.mark.knigavuhe.data.repo.BookRepository
 import dev.mark.knigavuhe.data.repo.Settings
 import dev.mark.knigavuhe.playback.PlaybackController
+import dev.mark.knigavuhe.sync.OwnSync
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import okhttp3.OkHttpClient
@@ -23,4 +24,5 @@ class AppContainer(context: Context) {
     val settings = Settings(appContext)
     val bookRepository = BookRepository(appContext, db, api, ownApi, settings)
     val playback = PlaybackController(appContext, bookRepository, appScope)
+    val ownSync = OwnSync(appContext, db, bookRepository, settings, appScope) { playback.ownChaptersChanged() }
 }

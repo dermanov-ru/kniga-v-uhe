@@ -6,7 +6,6 @@ import dev.mark.knigavuhe.AppContainer
 import dev.mark.knigavuhe.data.remote.OwnBook
 import dev.mark.knigavuhe.data.remote.OwnConnection
 import dev.mark.knigavuhe.data.remote.OwnIds
-import dev.mark.knigavuhe.download.DownloadWorker
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -43,6 +42,8 @@ class OwnLibraryViewModel(private val container: AppContainer) : ViewModel() {
         if (connection.value == null) return
         _state.value = _state.value.copy(loading = true, error = null)
         viewModelScope.launch {
+            // синк заводит книги в библиотеке приложения, список — витрина того, что на сервере
+            container.ownSync.sync(force = true)
             runCatching { container.bookRepository.ownBooks() }
                 .onSuccess { _state.value = _state.value.copy(loading = false, books = it) }
                 .onFailure { _state.value = _state.value.copy(loading = false, error = it.message ?: "Не удалось загрузить") }
@@ -58,25 +59,20 @@ class OwnLibraryViewModel(private val container: AppContainer) : ViewModel() {
         return true
     }
 
+    /** Пока экран открыт: обновлять витрину раз в 30 с, если что-то озвучивается. */
+    suspend fun poll() {
+        while (connection.value != null) {
+            kotlinx.coroutines.delay(30_000)
+            if (_state.value.books.none { it.isVoicing }) return
+            runCatching { container.bookRepository.ownBooks() }
+                .onSuccess { _state.value = _state.value.copy(books = it) }
+            container.ownSync.sync()
+        }
+    }
+
     fun disconnect() {
         container.settings.setLibrary(null)
         _state.value = OwnLibraryState()
-    }
-
-    /** Кладёт книгу в библиотеку приложения (или дописывает новые главы) и сразу качает. */
-    fun add(book: OwnBook, onAdded: (Int) -> Unit = {}) {
-        if (book.id in _state.value.busy) return
-        _state.value = _state.value.copy(busy = _state.value.busy + book.id)
-        viewModelScope.launch {
-            runCatching { container.bookRepository.addOwn(book.id) }
-                .onSuccess { localId ->
-                    DownloadWorker.enqueue(container.appContext, localId)
-                    _state.value = _state.value.copy(message = "«${book.title}» в библиотеке, главы качаются")
-                    onAdded(localId)
-                }
-                .onFailure { _state.value = _state.value.copy(message = it.message ?: "Не удалось добавить") }
-            _state.value = _state.value.copy(busy = _state.value.busy - book.id)
-        }
     }
 
     fun messageShown() {

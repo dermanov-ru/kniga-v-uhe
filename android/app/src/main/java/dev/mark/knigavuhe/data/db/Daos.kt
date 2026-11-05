@@ -28,6 +28,16 @@ interface BookDao {
     @Query("UPDATE books SET favorite = :favorite WHERE id = :id")
     suspend fun setFavorite(id: Int, favorite: Boolean)
 
+    @Query("UPDATE books SET autoDownload = :on WHERE id = :id")
+    suspend fun setAutoDownload(id: Int, on: Boolean)
+
+    @Query("UPDATE books SET remoteState = :state WHERE id = :id")
+    suspend fun setRemoteState(id: Int, state: String?)
+
+    /** Свои книги (отрицательные id). */
+    @Query("SELECT * FROM books WHERE id < 0")
+    suspend fun own(): List<BookEntity>
+
     @Query("SELECT * FROM books WHERE seriesSlug = :slug ORDER BY seriesIndex")
     suspend fun inSeries(slug: String): List<BookEntity>
 
@@ -41,6 +51,8 @@ interface BookDao {
                b.addedAt AS addedAt, b.favorite AS favorite,
                b.seriesSlug AS seriesSlug, b.series AS seriesName,
                b.seriesIndex AS seriesIndex, b.seriesTotal AS seriesTotal,
+               b.remoteState AS remoteState,
+               (SELECT COUNT(*) FROM chapters c5 WHERE c5.bookId = b.id AND c5.remoteState = 'done') AS remoteReady,
                (SELECT COUNT(*) FROM chapters c WHERE c.bookId = b.id AND c.state = 2) AS doneCount,
                p.chapterId AS chapterId,
                (SELECT c4.title FROM chapters c4 WHERE c4.id = p.chapterId) AS chapterTitle,
@@ -90,6 +102,15 @@ interface ChapterDao {
 
     @Query("DELETE FROM chapters WHERE bookId = :bookId")
     suspend fun deleteForBook(bookId: Int)
+
+    @Query(
+        "UPDATE chapters SET url = :url, title = :title, durationMs = :durationMs, remoteState = :remoteState, " +
+            "remoteDone = :remoteDone, remoteTotal = :remoteTotal, position = :position WHERE id = :id"
+    )
+    suspend fun updateRemote(
+        id: Int, url: String, title: String, durationMs: Long, remoteState: String?,
+        remoteDone: Int, remoteTotal: Int, position: Int,
+    )
 
     @Transaction
     suspend fun replaceUrls(fresh: Map<Int, String>) {

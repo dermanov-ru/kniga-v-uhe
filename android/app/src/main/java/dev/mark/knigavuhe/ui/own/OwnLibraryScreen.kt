@@ -69,6 +69,8 @@ fun OwnLibraryScreen(
     val snackbar = remember { SnackbarHostState() }
     var confirmDisconnect by remember { mutableStateOf(false) }
 
+    LaunchedEffect(connection) { viewModel.poll() }
+
     LaunchedEffect(state.message) {
         val text = state.message ?: return@LaunchedEffect
         snackbar.showSnackbar(text)
@@ -128,8 +130,6 @@ fun OwnLibraryScreen(
                 OwnBookRow(
                     book = book,
                     inLibrary = book.id in added,
-                    busy = book.id in state.busy,
-                    onAdd = { viewModel.add(book) },
                     onOpen = { onOpenBook(OwnIds.book(book.id)) },
                 )
             }
@@ -185,7 +185,7 @@ private fun ConnectPane(modifier: Modifier, onConnect: (String) -> Boolean) {
 }
 
 @Composable
-private fun OwnBookRow(book: OwnBook, inLibrary: Boolean, busy: Boolean, onAdd: () -> Unit, onOpen: () -> Unit) {
+private fun OwnBookRow(book: OwnBook, inLibrary: Boolean, onOpen: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth().clickable(enabled = inLibrary, onClick = onOpen)) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Cover(url = book.cover, size = 64.dp)
@@ -209,16 +209,15 @@ private fun OwnBookRow(book: OwnBook, inLibrary: Boolean, busy: Boolean, onAdd: 
                     LinearProgressIndicator(progress = { book.progress.toFloat() }, modifier = Modifier.fillMaxWidth())
                 }
                 Spacer(Modifier.height(8.dp))
-                when {
-                    busy -> CircularProgressIndicator(Modifier.padding(4.dp))
-                    book.chapters_done == 0 -> Text(
-                        "Готовых глав ещё нет",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    inLibrary -> OutlinedButton(onClick = onAdd) { Text("Подтянуть новые главы") }
-                    else -> Button(onClick = onAdd) { Text("Добавить в библиотеку") }
-                }
+                Text(
+                    when {
+                        book.state == "draft" -> "Черновик: в приложение попадёт, когда начнётся озвучка"
+                        inLibrary -> "В библиотеке приложения — нажмите, чтобы открыть"
+                        else -> "Появится в библиотеке после обновления"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (inLibrary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

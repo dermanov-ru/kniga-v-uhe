@@ -24,6 +24,12 @@ data class BookEntity(
     val seriesSlug: String? = null,
     val seriesIndex: Int = 0,
     val seriesTotal: Int = 0,
+    /** Своя книга: состояние озвучки на сервере (draft|queued|running|done|paused|error|gone), у knigavuhe null. */
+    val remoteState: String? = null,
+    /** Своя книга: сколько секунд осталось озвучивать, по оценке сервера. */
+    val remoteSecondsLeft: Int? = null,
+    /** Своя книга: «Скачать» нажато — новые готовые главы догружаются при синке. «Удалить файлы» снимает. */
+    val autoDownload: Boolean = false,
 )
 
 @Entity(
@@ -40,14 +46,25 @@ data class ChapterEntity(
     val sizeBytes: Long = 0,
     val downloadedBytes: Long = 0,
     val state: Int = STATE_PENDING,
+    /** Своя книга: состояние главы на сервере (done|running|queued|new|error), у knigavuhe null. */
+    val remoteState: String? = null,
+    /** Своя книга, глава в озвучке: сколько кусков готово из скольких. */
+    val remoteDone: Int = 0,
+    val remoteTotal: Int = 0,
 ) {
     val isDownloaded: Boolean get() = state == STATE_DONE
+
+    /** Звук есть: скачан или готов на сервере (у knigavuhe всегда). */
+    val isPlayable: Boolean
+        get() = isDownloaded || ((remoteState == null || remoteState == REMOTE_DONE) && url.isNotBlank())
 
     companion object {
         const val STATE_PENDING = 0
         const val STATE_DOWNLOADING = 1
         const val STATE_DONE = 2
         const val STATE_FAILED = 3
+        const val REMOTE_DONE = "done"
+        const val REMOTE_RUNNING = "running"
     }
 }
 

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import dev.mark.knigavuhe.AppContainer
 import dev.mark.knigavuhe.data.db.BookEntity
 import dev.mark.knigavuhe.data.db.ChapterEntity
+import dev.mark.knigavuhe.data.remote.OwnIds
 import dev.mark.knigavuhe.data.repo.Storage
 import dev.mark.knigavuhe.download.DownloadWorker
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -70,7 +71,20 @@ class BookViewModel(
         }
     }
 
-    fun download() = DownloadWorker.enqueue(container.appContext, bookId)
+    val isOwn: Boolean get() = OwnIds.isOwn(bookId)
+
+    /** «Скачать»: у своей книги ещё и флаг — новые готовые главы догружаются при синке. */
+    fun download() {
+        viewModelScope.launch {
+            container.bookRepository.setAutoDownload(bookId, true)
+            DownloadWorker.enqueue(container.appContext, bookId)
+        }
+    }
+
+    /** Пока экран открыт: синк своей книги, раз в 30 с, если она озвучивается. */
+    suspend fun pollOwn() {
+        if (isOwn) container.ownSync.pollWhileVoicing()
+    }
 
     fun cancelDownload() {
         DownloadWorker.cancel(container.appContext, bookId)
@@ -88,7 +102,9 @@ class BookViewModel(
 
     fun play(chapterIndex: Int? = null) {
         viewModelScope.launch {
-            val chapterId = chapterIndex?.let { state.value.chapters.getOrNull(it)?.id }
+            val chapter = chapterIndex?.let { state.value.chapters.getOrNull(it) }
+            if (chapter != null && !chapter.isPlayable) return@launch
+            val chapterId = chapter?.id
             container.playback.open(
                 bookId = bookId,
                 chapterId = chapterId,

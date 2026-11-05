@@ -40,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -73,6 +74,8 @@ fun LibraryScreen(
     val message by viewModel.message.collectAsStateWithLifecycle()
     var showAdd by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<LibraryRow?>(null) }
+    // «Моя библиотека»: свои книги появляются сами; пока что-то озвучивается — раз в 30 с
+    LaunchedEffect(Unit) { viewModel.pollOwn() }
 
     Scaffold(
         topBar = {
@@ -364,6 +367,20 @@ private fun LibraryItem(
                 progress = { row.progress },
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (row.voicing) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "озвучивается · готово глав ${row.remoteReady} из ${row.chapterCount}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.height(2.dp))
+                LinearProgressIndicator(
+                    progress = { row.voicingProgress },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.tertiary,
+                )
+            }
         }
     }
 }

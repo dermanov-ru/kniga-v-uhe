@@ -162,10 +162,9 @@ class BookRepository(
     /** Список книг на сервере библиотеки. */
     suspend fun ownBooks(): List<OwnBook> = ownApi.books(connection())
 
-    /** Добавляет свою книгу в библиотеку приложения (или дописывает новые готовые главы). */
+    /** Заводит или обновляет свою книгу со всеми главами и статусами. Файлы не качает. */
     suspend fun addOwn(remoteId: String): Int {
-        val manifest = ownApi.manifest(connection(), remoteId)
-        storeOwn(manifest)
+        storeOwn(ownApi.manifest(connection(), remoteId))
         return OwnIds.book(remoteId)
     }
 
@@ -176,6 +175,32 @@ class BookRepository(
         return db.chapters().forBook(bookId)
     }
 
+    /**
+     * Синк своей библиотеки: книги со state != draft заводятся сами (только метаданные и статусы),
+     * manifest тянется для новых, озвучиваемых и тех, где число готовых глав разошлось.
+     * Книга пропала с сервера — локально остаётся, помечается gone. Возвращает id книг, где
+     * появились новые готовые главы: у них с autoDownload надо поставить загрузку.
+     */
+    suspend fun syncOwn(): List<Int> {
+        val remote = ownBooks().filter { it.state != "draft" }
+        val local = db.books().own().associateBy { it.id }
+        val grown = mutableListOf<Int>()
+        for (book in remote) {
+            val id = OwnIds.book(book.id)
+            val known = local[id]
+            val readyLocal = if (known == null) -1 else db.chapters().forBook(id).count { it.remoteState == ChapterEntity.REMOTE_DONE }
+            val stale = known == null || book.isVoicing || known.remoteState != book.state || readyLocal != book.chapters_done
+            if (!stale) continue
+            val before = readyLocal.coerceAtLeast(0)
+            storeOwn(ownApi.manifest(connection(), book.id))
+            val after = db.chapters().forBook(id).count { it.remoteState == ChapterEntity.REMOTE_DONE }
+            if (after > before) grown += id
+        }
+        val alive = remote.map { OwnIds.book(it.id) }.toSet()
+        local.values.filter { it.id !in alive && it.remoteState != "gone" }.forEach { db.books().setRemoteState(it.id, "gone") }
+        return grown
+    }
+
     private suspend fun storeOwn(m: OwnBook) {
         val conn = connection()
         val id = OwnIds.book(m.id)
@@ -183,7 +208,7 @@ class BookRepository(
         if (existing != null && existing.path != OwnIds.path(m.id)) {
             throw OwnLibraryException(0, "Совпал номер с другой книгой: «${existing.title}»")
         }
-        val ready = m.chapters.filter { it.url != null && it.n in 1..OwnIds.MAX_CHAPTERS }.sortedBy { it.n }
+        val all = m.chapters.filter { it.n in 1..OwnIds.MAX_CHAPTERS }.sortedBy { it.n }
         db.books().upsert(
             BookEntity(
                 id = id,
@@ -193,29 +218,44 @@ class BookRepository(
                 readers = m.voice_title,
                 series = m.series,
                 cover = m.cover?.let(conn::absolute),
-                totalDurationMs = ready.sumOf { ((it.duration ?: 0.0) * 1000).toLong() },
-                chapterCount = ready.size,
+                totalDurationMs = all.filter { it.state == ChapterEntity.REMOTE_DONE }
+                    .sumOf { ((it.duration ?: 0.0) * 1000).toLong() },
+                chapterCount = all.size,
                 addedAt = existing?.addedAt ?: System.currentTimeMillis(),
                 urlsFetchedAt = System.currentTimeMillis(),
                 speedLevels = existing?.speedLevels.orEmpty(),
                 favorite = existing?.favorite ?: false,
+                remoteState = m.state,
+                remoteSecondsLeft = m.seconds_left,
+                autoDownload = existing?.autoDownload ?: false,
             )
         )
         // Позиция — номер главы: глава, готовая позже соседних, всё равно встанет на своё место
-        val chapters = ready.map { ch ->
+        val chapters = all.map { ch ->
             ChapterEntity(
                 id = OwnIds.chapter(m.id, ch.n),
                 bookId = id,
                 position = ch.n,
                 title = ch.title,
-                url = conn.absolute(ch.url!!),
+                url = ch.url?.let(conn::absolute).orEmpty(),
                 durationMs = ((ch.duration ?: 0.0) * 1000).toLong(),
                 sizeBytes = ch.size ?: 0,
+                remoteState = ch.state,
+                remoteDone = ch.done,
+                remoteTotal = ch.total,
             )
         }
         db.chapters().insertAll(chapters)
-        // Уже скачанные главы сохраняют файл и состояние, обновляются только ссылки
-        db.chapters().replaceUrls(chapters.associate { it.id to it.url })
+        // У существующих: статус, ссылка, длительность; скачанный файл и его состояние не трогаем
+        chapters.forEach {
+            db.chapters().updateRemote(it.id, it.url, it.title, it.durationMs, it.remoteState,
+                it.remoteDone, it.remoteTotal, it.position)
+        }
+    }
+
+    /** «Скачать» у своей книги: качать готовое сейчас и догружать новое при синке. */
+    suspend fun setAutoDownload(bookId: Int, on: Boolean) {
+        if (OwnIds.isOwn(bookId)) db.books().setAutoDownload(bookId, on)
     }
 
     /** Звезда на весь цикл: книги импортируются, файлы не качаются. */
@@ -266,6 +306,7 @@ class BookRepository(
 
     /** Frees the audio but keeps the book and the saved position in the library. */
     suspend fun deleteDownloads(bookId: Int) {
+        setAutoDownload(bookId, false)
         Storage.deleteBook(context, bookId)
         db.chapters().forBook(bookId).forEach {
             db.chapters().updateProgress(it.id, ChapterEntity.STATE_PENDING, 0, 0)

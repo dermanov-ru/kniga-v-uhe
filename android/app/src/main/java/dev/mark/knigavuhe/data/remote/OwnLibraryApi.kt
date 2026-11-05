@@ -20,10 +20,17 @@ import java.net.URLDecoder
 data class OwnChapter(
     val n: Int,
     val title: String = "",
+    /** done|running|queued|new|error; в manifest без all=1 поля нет — там только готовые. */
+    val state: String = "done",
+    val done: Int = 0,
+    val total: Int = 0,
     val duration: Double? = null,
     val size: Long? = null,
     val url: String? = null,
 )
+
+@Serializable
+data class OwnRunning(val n: Int, val title: String = "", val done: Int = 0, val total: Int = 0)
 
 @Serializable
 data class OwnBook(
@@ -35,6 +42,9 @@ data class OwnBook(
     val state: String = "",
     val chapters_total: Int = 0,
     val chapters_done: Int = 0,
+    val chapters_queued: Int = 0,
+    val running: OwnRunning? = null,
+    val seconds_left: Int? = null,
     val progress: Double = 0.0,
     val duration: Double = 0.0,
     val size: Long = 0,
@@ -43,6 +53,7 @@ data class OwnBook(
     val links_expire: Long = 0,
 ) {
     val isDone: Boolean get() = state == "done"
+    val isVoicing: Boolean get() = state == "queued" || state == "running"
     val authorsText: String get() = authors.joinToString(", ")
 }
 
@@ -87,8 +98,9 @@ class OwnLibraryApi(private val client: OkHttpClient = Http.client) {
         parseBooks(get(conn, "/v1/library/books")).map { it.copy(cover = it.cover?.let(conn::absolute)) }
     }
 
-    suspend fun manifest(conn: OwnConnection, bookId: String): OwnBook = withContext(Dispatchers.IO) {
-        parseManifest(get(conn, "/v1/library/books/$bookId/manifest")).let { it.copy(cover = it.cover?.let(conn::absolute)) }
+    /** all=true — все не снятые главы со статусами, ссылки только у готовых. */
+    suspend fun manifest(conn: OwnConnection, bookId: String, all: Boolean = true): OwnBook = withContext(Dispatchers.IO) {
+        parseManifest(get(conn, "/v1/library/books/$bookId/manifest" + if (all) "?all=1" else "")).let { it.copy(cover = it.cover?.let(conn::absolute)) }
     }
 
     fun parseBooks(raw: String): List<OwnBook> = json.decodeFromString(raw)

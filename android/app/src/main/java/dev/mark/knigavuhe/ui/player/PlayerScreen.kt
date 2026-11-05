@@ -116,6 +116,15 @@ fun PlayerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.clickable { showChapters = true }.padding(4.dp),
             )
+            // своя книга: дослушали до главы, которую ещё озвучивают
+            state.notice?.let { notice ->
+                Text(
+                    notice,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
 
             Spacer(Modifier.height(16.dp))
             val duration = state.durationMs.coerceAtLeast(1)

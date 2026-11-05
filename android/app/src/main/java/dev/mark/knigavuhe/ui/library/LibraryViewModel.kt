@@ -49,6 +49,8 @@ class LibraryViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    suspend fun pollOwn() = container.ownSync.pollWhileVoicing()
+
     fun continueLast(onOpen: (Int) -> Unit) {
         viewModelScope.launch {
             val last = container.bookRepository.lastPlayed() ?: return@launch

@@ -89,6 +89,7 @@ fun AppRoot(incomingLink: String?, onLinkHandled: () -> Unit) {
             onLinkHandled()
             if (connection != null) {
                 container.settings.setLibrary(connection)
+                container.ownSync.syncSoon(force = true)
                 navController.navigate(ROUTE_OWN)
                 snackbar.showSnackbar("Библиотека подключена")
             } else {

@@ -119,4 +119,6 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    // Тест миграции Room на настоящем SQLite без устройства
+    testImplementation("org.xerial:sqlite-jdbc:3.41.2.2")
 }

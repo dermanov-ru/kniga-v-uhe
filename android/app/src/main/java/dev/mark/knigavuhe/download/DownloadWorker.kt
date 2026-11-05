@@ -58,6 +58,8 @@ class DownloadWorker(
 
         var chapters = repo.refreshUrlsIfStale(bookId).ifEmpty { repo.chapters(bookId) }
         chapters = chapters.filterNot { it.isDownloaded && chapterOnDisk(bookId, it) }
+            // своя книга: главы, которые ещё озвучиваются, качать нечего
+            .filter { it.isDownloaded || it.isPlayable }
         total = chapters.size
         if (total == 0) return Result.success()
 

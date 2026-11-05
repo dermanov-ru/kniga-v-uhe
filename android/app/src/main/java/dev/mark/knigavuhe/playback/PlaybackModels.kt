@@ -21,6 +21,8 @@ data class PlaybackUiState(
     val error: String? = null,
     /** Книга доиграна до конца — повод предложить следующую в цикле. */
     val finishedBookId: Int? = null,
+    /** Своя книга: подсказка вроде «Следующая глава ещё озвучивается». */
+    val notice: String? = null,
 )
 
 sealed interface SleepState {

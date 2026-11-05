@@ -12,6 +12,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import dev.mark.knigavuhe.data.db.ChapterEntity
+import dev.mark.knigavuhe.data.remote.OwnIds
 import dev.mark.knigavuhe.data.repo.BookRepository
 import dev.mark.knigavuhe.data.repo.Storage
 import kotlinx.coroutines.CoroutineScope
@@ -37,7 +38,11 @@ class PlaybackController(
     private val _state = MutableStateFlow(PlaybackUiState())
     val state: StateFlow<PlaybackUiState> = _state.asStateFlow()
 
+    /** Главы в плеере (у своей книги — только непрерывный блок готовых). */
     private var chapters: List<ChapterEntity> = emptyList()
+    /** Все главы книги и где в них начинается блок плеера: для номера главы и времени от начала книги. */
+    private var allChapters: List<ChapterEntity> = emptyList()
+    private var blockStart = 0
     private var chapterOffsets: LongArray = LongArray(0)
     private var sleepJob: Job? = null
     private var sleepUntil: Long = 0
@@ -86,8 +91,15 @@ class PlaybackController(
             pushState()
             if (playbackState == Player.STATE_ENDED) {
                 saveProgress()
-                // Плейлист — это вся книга, поэтому STATE_ENDED означает, что она дослушана.
-                _state.value = _state.value.copy(finishedBookId = _state.value.bookId)
+                val bookId = _state.value.bookId
+                val block = blockStart until blockStart + chapters.size
+                if (bookId != null && OwnIds.isOwn(bookId) && PlaylistRules.waitsForNext(allChapters, block)) {
+                    // Своя книга: дальше глава ещё не озвучена — пауза в конце, книга не дочитана
+                    _state.value = _state.value.copy(notice = NEXT_NOT_READY)
+                } else {
+                    // Плейлист — это вся книга, поэтому STATE_ENDED означает, что она дослушана.
+                    _state.value = _state.value.copy(finishedBookId = bookId)
+                }
             }
         }
 
@@ -122,9 +134,17 @@ class PlaybackController(
         val targetChapterId = chapterId ?: saved?.chapterId ?: loaded.first().id
         val targetPosition = positionMs ?: saved?.positionMs ?: 0L
         val speed = saved?.speed ?: 1f
-        val index = loaded.indexOfFirst { it.id == targetChapterId }.coerceAtLeast(0)
+        val fullIndex = loaded.indexOfFirst { it.id == targetChapterId }.coerceAtLeast(0)
+        val block = PlaylistRules.block(loaded, fullIndex, OwnIds.isOwn(bookId))
+        if (block == null) {
+            _state.value = _state.value.copy(notice = CHAPTER_NOT_READY)
+            return
+        }
+        val index = fullIndex - block.first
 
-        chapters = loaded
+        allChapters = loaded
+        blockStart = block.first
+        chapters = loaded.subList(block.first, block.last + 1).toList()
         chapterOffsets = LongArray(loaded.size)
         var acc = 0L
         loaded.forEachIndexed { i, chapter ->
@@ -137,11 +157,11 @@ class PlaybackController(
             flushProgress()
         }
 
-        val items = loaded.map { chapter -> mediaItem(book.id, book.title, book.authors, book.cover, chapter) }
+        val items = chapters.map { chapter -> mediaItem(book.id, book.title, book.authors, book.cover, chapter) }
         withContext(Dispatchers.Main) {
             switching = true
             retriedAfterRefresh = false
-            _state.value = _state.value.copy(finishedBookId = null)
+            _state.value = _state.value.copy(finishedBookId = null, notice = null)
             player.setMediaItems(items, index, targetPosition)
             player.playbackParameters = PlaybackParameters(speed)
             player.prepare()
@@ -197,9 +217,45 @@ class PlaybackController(
         if (player.isPlaying) {
             player.pause()
         } else {
+            // Своя книга дослушана до неготовой главы, а синк уже принёс её — продолжаем с неё
+            if (player.playbackState == Player.STATE_ENDED && player.hasNextMediaItem()) player.seekToNextMediaItem()
             startSessionHost()
             player.play()
         }
+    }
+
+    /**
+     * Синк принёс новые готовые главы. Если играет своя книга, дописываем готовые главы
+     * в конец плейлиста, не прерывая звук; сообщение «ещё озвучивается» снимаем.
+     */
+    suspend fun ownChaptersChanged() {
+        val bookId = _state.value.bookId ?: return
+        if (!OwnIds.isOwn(bookId)) return
+        val book = repo.book(bookId) ?: return
+        val loaded = repo.chapters(bookId)
+        withContext(Dispatchers.Main) {
+            if (_state.value.bookId != bookId || chapters.isEmpty()) return@withContext
+            val current = chapters.last()
+            val at = loaded.indexOfFirst { it.id == current.id }
+            if (at < 0) return@withContext
+            val fresh = mutableListOf<ChapterEntity>()
+            var i = at + 1
+            while (i < loaded.size && loaded[i].isPlayable) fresh += loaded[i++]
+            allChapters = loaded
+            chapterOffsets = offsets(loaded)
+            if (fresh.isEmpty()) return@withContext
+            player.addMediaItems(fresh.map { mediaItem(book.id, book.title, book.authors, book.cover, it) })
+            chapters = chapters + fresh
+            _state.value = _state.value.copy(notice = null, chapterCount = loaded.size)
+            pushState()
+        }
+    }
+
+    private fun offsets(list: List<ChapterEntity>): LongArray {
+        val out = LongArray(list.size)
+        var acc = 0L
+        list.forEachIndexed { i, chapter -> out[i] = acc; acc += chapter.durationMs }
+        return out
     }
 
     fun seekTo(positionMs: Long) {
@@ -218,19 +274,43 @@ class PlaybackController(
     }
 
     fun nextChapter() {
-        if (player.hasNextMediaItem()) player.seekToNextMediaItem()
+        if (player.hasNextMediaItem()) {
+            player.seekToNextMediaItem()
+        } else {
+            val bookId = _state.value.bookId
+            val block = blockStart until blockStart + chapters.size
+            if (bookId != null && OwnIds.isOwn(bookId) && PlaylistRules.waitsForNext(allChapters, block)) {
+                _state.value = _state.value.copy(notice = NEXT_NOT_READY)
+            }
+        }
+    }
+
+    fun clearNotice() {
+        _state.value = _state.value.copy(notice = null)
     }
 
     fun previousChapter() {
         if (player.currentPosition > 3_000) player.seekTo(0) else if (player.hasPreviousMediaItem()) player.seekToPreviousMediaItem()
     }
 
+    /** index — номер главы в книге (список глав на экране плеера — вся книга). */
     fun playChapter(index: Int) {
-        if (index !in chapters.indices) return
-        player.seekTo(index, 0)
-        startSessionHost()
-        player.play()
-        pushState()
+        val local = index - blockStart
+        if (local in chapters.indices) {
+            player.seekTo(local, 0)
+            startSessionHost()
+            player.play()
+            pushState()
+            return
+        }
+        val chapter = allChapters.getOrNull(index) ?: return
+        val bookId = _state.value.bookId ?: return
+        if (!chapter.isPlayable) {
+            _state.value = _state.value.copy(notice = CHAPTER_NOT_READY)
+            return
+        }
+        // своя книга: готовая глава за дырой — открываем её блок заново
+        scope.launch { open(bookId, chapter.id, 0L, play = true) }
     }
 
     fun clearFinished() {
@@ -334,10 +414,12 @@ class PlaybackController(
         val index = player.currentMediaItemIndex
         val chapter = chapters.getOrNull(index)
         val position = player.currentPosition.coerceAtLeast(0)
-        val elapsed = (chapterOffsets.getOrNull(index) ?: 0L) + position
+        // номер главы и время — от начала книги, даже если в плеере только блок готовых глав
+        val fullIndex = blockStart + index
+        val elapsed = (chapterOffsets.getOrNull(fullIndex) ?: 0L) + position
         _state.value = _state.value.copy(
             chapterId = chapter?.id ?: _state.value.chapterId,
-            chapterIndex = index,
+            chapterIndex = fullIndex,
             chapterTitle = chapter?.title.orEmpty(),
             positionMs = position,
             durationMs = player.duration.takeIf { it > 0 } ?: chapter?.durationMs ?: 0,
@@ -357,6 +439,8 @@ class PlaybackController(
     companion object {
         const val SKIP_BACK_MS = 10_000L
         const val SKIP_FORWARD_MS = 30_000L
+        const val NEXT_NOT_READY = "Следующая глава ещё озвучивается"
+        const val CHAPTER_NOT_READY = "Глава ещё озвучивается"
 
         /**
          * Защита от записи чужой главы: при подмене книги плеер успевает переключиться раньше,
