@@ -35,7 +35,7 @@ class ListenSyncTest {
         assertEquals(PlayAction.Local, ListenRules.decide(api.parseWhere("""{"state":null,"advice":"local"}"""), false))
         assertEquals(PlayAction.Local, ListenRules.decide(where("local"), false))
         // отступ 60 с перешёл через границу главы: прыгаем на jump_n, а не на n
-        assertEquals(PlayAction.Jump(4, 700_000, "HUAWEI P30"), ListenRules.decide(where("jump"), false))
+        assertEquals(PlayAction.Jump(4, 700_000, "HUAWEI P30", 5, 760_000), ListenRules.decide(where("jump"), false))
         assertEquals(PlayAction.Ask("HUAWEI P30"), ListenRules.decide(where("ask"), false))
         // сам выбрал главу: на чужое место не прыгаем, но про играющее устройство спрашиваем
         assertEquals(PlayAction.Local, ListenRules.decide(where("jump"), explicit = true))

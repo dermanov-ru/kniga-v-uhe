@@ -112,7 +112,7 @@ class PlaybackController(
         when (val action = ListenRules.decide(sync.where(book), explicit)) {
             PlayAction.Local -> playLocal(bookId, chapterId, positionMs)
             is PlayAction.Jump -> jumpTo(bookId, action.n, action.posMs,
-                "Продолжаю с места на ${action.device} — глава ${action.n}, ${ListenRules.clock(action.posMs)}")
+                "Продолжаю с места на ${action.device} (глава ${action.fromN}, ${ListenRules.clock(action.fromPosMs)}) — на минуту раньше")
             is PlayAction.Ask -> _ask.value = AskClaim(bookId, book, action.device, chapterId, positionMs)
         }
     }

@@ -14,7 +14,8 @@ sealed interface PlayAction {
     data object Local : PlayAction
 
     /** Последнее место — с другого устройства: прыгнуть туда (сервер уже отнял 60 с). */
-    data class Jump(val n: Int, val posMs: Long, val device: String) : PlayAction
+    /** n/posMs — куда прыгаем (на минуту раньше), fromN/fromPosMs — где остановилось другое устройство. */
+    data class Jump(val n: Int, val posMs: Long, val device: String, val fromN: Int = n, val fromPosMs: Long = posMs) : PlayAction
 
     /** Сейчас играет на другом устройстве — спросить, перехватывать ли. */
     data class Ask(val device: String) : PlayAction
@@ -32,7 +33,7 @@ object ListenRules {
         return when (where.advice) {
             "ask" -> PlayAction.Ask(state.device_name.ifBlank { "другом устройстве" })
             "jump" -> if (explicit) PlayAction.Local
-                else PlayAction.Jump(state.jump_n ?: state.n, state.jump_pos_ms, state.device_name)
+                else PlayAction.Jump(state.jump_n ?: state.n, state.jump_pos_ms, state.device_name, state.n, state.pos_ms)
             else -> PlayAction.Local
         }
     }
