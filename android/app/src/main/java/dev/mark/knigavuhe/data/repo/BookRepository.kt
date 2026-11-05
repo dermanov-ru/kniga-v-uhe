@@ -8,6 +8,11 @@ import dev.mark.knigavuhe.data.db.PlaybackStateEntity
 import dev.mark.knigavuhe.data.remote.BookCard
 import dev.mark.knigavuhe.data.remote.BookData
 import dev.mark.knigavuhe.data.remote.KnigavuheApi
+import dev.mark.knigavuhe.data.remote.OwnBook
+import dev.mark.knigavuhe.data.remote.OwnConnection
+import dev.mark.knigavuhe.data.remote.OwnIds
+import dev.mark.knigavuhe.data.remote.OwnLibraryApi
+import dev.mark.knigavuhe.data.remote.OwnLibraryException
 import dev.mark.knigavuhe.data.remote.SeriesScraper
 import kotlinx.coroutines.flow.Flow
 
@@ -15,6 +20,8 @@ class BookRepository(
     private val context: Context,
     private val db: AppDatabase,
     private val api: KnigavuheApi,
+    private val ownApi: OwnLibraryApi,
+    private val settings: Settings,
 ) {
     fun observeBooks(): Flow<List<BookEntity>> = db.books().observeAll()
     fun observeBook(id: Int): Flow<BookEntity?> = db.books().observe(id)
@@ -38,6 +45,10 @@ class BookRepository(
     }
 
     suspend fun importById(bookId: Int): Int {
+        if (OwnIds.isOwn(bookId)) {
+            refreshOwn(bookId)
+            return bookId
+        }
         val data = api.fetchBookData(bookId)
         store(data)
         attachSeries(bookId, data.path)
@@ -50,6 +61,7 @@ class BookRepository(
      */
     /** Для книг, добавленных до появления циклов: подтянуть привязку при первом открытии. */
     suspend fun ensureSeries(bookId: Int) {
+        if (OwnIds.isOwn(bookId)) return
         val book = db.books().get(bookId) ?: return
         if (book.seriesSlug != null) return
         attachSeries(bookId, book.path)
@@ -78,6 +90,7 @@ class BookRepository(
      * идут уже по порядку и пронумерованы прямо в названии.
      */
     suspend fun nextInSeries(bookId: Int): BookCard? {
+        if (OwnIds.isOwn(bookId)) return null
         val book = db.books().get(bookId) ?: return null
         val slug = book.seriesSlug ?: return null
         if (book.seriesIndex <= 0) return null
@@ -127,6 +140,7 @@ class BookRepository(
      * a day is refetched before we hand links to the downloader or the player.
      */
     suspend fun refreshUrls(bookId: Int): List<ChapterEntity> {
+        if (OwnIds.isOwn(bookId)) return refreshOwn(bookId)
         val data = api.fetchBookData(bookId)
         db.chapters().replaceUrls(data.tracks.associate { it.id to it.url })
         db.books().get(bookId)?.let { db.books().upsert(it.copy(urlsFetchedAt = System.currentTimeMillis())) }
@@ -136,7 +150,72 @@ class BookRepository(
     suspend fun refreshUrlsIfStale(bookId: Int): List<ChapterEntity> {
         val book = db.books().get(bookId) ?: return emptyList()
         val age = System.currentTimeMillis() - book.urlsFetchedAt
-        return if (age > URL_TTL_MS) refreshUrls(bookId) else db.chapters().forBook(bookId)
+        val ttl = if (OwnIds.isOwn(bookId)) OWN_URL_TTL_MS else URL_TTL_MS
+        return if (age > ttl) refreshUrls(bookId) else db.chapters().forBook(bookId)
+    }
+
+    // ---------- «Моя библиотека» ----------
+
+    private fun connection(): OwnConnection =
+        settings.library.value ?: throw OwnLibraryException(0, "Библиотека не подключена")
+
+    /** Список книг на сервере библиотеки. */
+    suspend fun ownBooks(): List<OwnBook> = ownApi.books(connection())
+
+    /** Добавляет свою книгу в библиотеку приложения (или дописывает новые готовые главы). */
+    suspend fun addOwn(remoteId: String): Int {
+        val manifest = ownApi.manifest(connection(), remoteId)
+        storeOwn(manifest)
+        return OwnIds.book(remoteId)
+    }
+
+    private suspend fun refreshOwn(bookId: Int): List<ChapterEntity> {
+        val book = db.books().get(bookId) ?: return emptyList()
+        val remoteId = OwnIds.fromPath(book.path) ?: return db.chapters().forBook(bookId)
+        storeOwn(ownApi.manifest(connection(), remoteId))
+        return db.chapters().forBook(bookId)
+    }
+
+    private suspend fun storeOwn(m: OwnBook) {
+        val conn = connection()
+        val id = OwnIds.book(m.id)
+        val existing = db.books().get(id)
+        if (existing != null && existing.path != OwnIds.path(m.id)) {
+            throw OwnLibraryException(0, "Совпал номер с другой книгой: «${existing.title}»")
+        }
+        val ready = m.chapters.filter { it.url != null && it.n in 1..OwnIds.MAX_CHAPTERS }.sortedBy { it.n }
+        db.books().upsert(
+            BookEntity(
+                id = id,
+                title = m.title,
+                path = OwnIds.path(m.id),
+                authors = m.authorsText,
+                readers = m.voice_title,
+                series = m.series,
+                cover = m.cover?.let(conn::absolute),
+                totalDurationMs = ready.sumOf { ((it.duration ?: 0.0) * 1000).toLong() },
+                chapterCount = ready.size,
+                addedAt = existing?.addedAt ?: System.currentTimeMillis(),
+                urlsFetchedAt = System.currentTimeMillis(),
+                speedLevels = existing?.speedLevels.orEmpty(),
+                favorite = existing?.favorite ?: false,
+            )
+        )
+        // Позиция — номер главы: глава, готовая позже соседних, всё равно встанет на своё место
+        val chapters = ready.map { ch ->
+            ChapterEntity(
+                id = OwnIds.chapter(m.id, ch.n),
+                bookId = id,
+                position = ch.n,
+                title = ch.title,
+                url = conn.absolute(ch.url!!),
+                durationMs = ((ch.duration ?: 0.0) * 1000).toLong(),
+                sizeBytes = ch.size ?: 0,
+            )
+        }
+        db.chapters().insertAll(chapters)
+        // Уже скачанные главы сохраняют файл и состояние, обновляются только ссылки
+        db.chapters().replaceUrls(chapters.associate { it.id to it.url })
     }
 
     /** Звезда на весь цикл: книги импортируются, файлы не качаются. */
@@ -195,6 +274,9 @@ class BookRepository(
 
     companion object {
         private const val URL_TTL_MS = 24L * 60 * 60 * 1000
+
+        /** Подписанные ссылки своей библиотеки живут 7 дней; обновляем за сутки до конца. */
+        private const val OWN_URL_TTL_MS = 6L * 24 * 60 * 60 * 1000
 
         /**
          * Сайт печатает номер прямо в названии («2. Тайная комната»), и книги на странице цикла

@@ -42,6 +42,13 @@
                 <data android:scheme="https" android:host="knigavuhe.org" android:pathPrefix="/book/" />
                 <data android:scheme="https" android:host="m.knigavuhe.org" android:pathPrefix="/book/" />
             </intent-filter>
+            <!-- QR со страницы своей библиотеки озвучки: knigavuhe://library?url=…&key=… -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="knigavuhe" android:host="library" />
+            </intent-filter>
         </activity>
 
         <service

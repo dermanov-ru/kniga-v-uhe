@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.ExpandLess
@@ -62,6 +63,7 @@ fun LibraryScreen(
     onOpenPlayer: () -> Unit,
     onOpenFavorites: () -> Unit,
     onOpenStorage: () -> Unit,
+    onOpenOwn: () -> Unit,
     onOpenSeries: (String, String) -> Unit,
 ) {
     val books by viewModel.books.collectAsStateWithLifecycle()
@@ -77,6 +79,9 @@ fun LibraryScreen(
             TopAppBar(
                 title = { Text("Моя библиотека") },
                 actions = {
+                    IconButton(onClick = onOpenOwn) {
+                        Icon(Icons.Rounded.LibraryMusic, contentDescription = "Мои озвучки")
+                    }
                     IconButton(onClick = onOpenFavorites) {
                         Icon(Icons.Rounded.Star, contentDescription = "Избранное")
                     }

@@ -32,6 +32,9 @@ import androidx.navigation.navArgument
 import dev.mark.knigavuhe.App
 import dev.mark.knigavuhe.data.remote.BookCard
 import dev.mark.knigavuhe.data.remote.KnigavuheApi
+import dev.mark.knigavuhe.data.remote.OwnConnection
+import dev.mark.knigavuhe.ui.own.OwnLibraryScreen
+import dev.mark.knigavuhe.ui.own.OwnLibraryViewModel
 import dev.mark.knigavuhe.ui.book.BookScreen
 import dev.mark.knigavuhe.ui.book.BookViewModel
 import dev.mark.knigavuhe.ui.favorites.FavoritesScreen
@@ -56,6 +59,7 @@ private const val ROUTE_BOOK = "book/{bookId}"
 private const val ROUTE_FAVORITES = "favorites"
 private const val ROUTE_STORAGE = "storage"
 private const val ROUTE_SERIES = "series/{slug}?name={name}"
+private const val ROUTE_OWN = "own"
 
 @Composable
 fun AppRoot(incomingLink: String?, onLinkHandled: () -> Unit) {
@@ -79,6 +83,19 @@ fun AppRoot(incomingLink: String?, onLinkHandled: () -> Unit) {
     // through, slug-only ones never did.
     LaunchedEffect(incomingLink) {
         val link = incomingLink ?: return@LaunchedEffect
+        // QR со страницы своей библиотеки: knigavuhe://library?url=…&key=…
+        if (link.contains("knigavuhe://library")) {
+            val connection = OwnConnection.parse(link)
+            onLinkHandled()
+            if (connection != null) {
+                container.settings.setLibrary(connection)
+                navController.navigate(ROUTE_OWN)
+                snackbar.showSnackbar("Библиотека подключена")
+            } else {
+                snackbar.showSnackbar("Не получилось разобрать ссылку библиотеки")
+            }
+            return@LaunchedEffect
+        }
         val extracted = KnigavuheApi.extractLink(link) ?: link
         val resolved = runCatching { container.api.resolveBookId(KnigavuheApi.normalizeUrl(extracted)) }
         onLinkHandled()
@@ -130,6 +147,7 @@ fun AppRoot(incomingLink: String?, onLinkHandled: () -> Unit) {
                             onOpenPlayer = { navController.navigate(ROUTE_PLAYER) },
                             onOpenFavorites = { navController.navigate(ROUTE_FAVORITES) },
                             onOpenStorage = { navController.navigate(ROUTE_STORAGE) },
+                            onOpenOwn = { navController.navigate(ROUTE_OWN) },
                             onOpenSeries = { slug, name ->
                                 navController.navigate("series/$slug?name=" + Uri.encode(name))
                             },
@@ -202,6 +220,14 @@ fun AppRoot(incomingLink: String?, onLinkHandled: () -> Unit) {
                         appViewModel("series-$slug") { SeriesViewModel(it, slug, name) }
                     SeriesScreen(
                         viewModel = seriesViewModel,
+                        onBack = { navController.popBackStack() },
+                        onOpenBook = { navController.navigate("book/$it") },
+                    )
+                }
+                composable(ROUTE_OWN) {
+                    val ownViewModel: OwnLibraryViewModel = appViewModel("own") { OwnLibraryViewModel(it) }
+                    OwnLibraryScreen(
+                        viewModel = ownViewModel,
                         onBack = { navController.popBackStack() },
                         onOpenBook = { navController.navigate("book/$it") },
                     )

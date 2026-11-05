@@ -4,6 +4,7 @@ import android.content.Context
 import dev.mark.knigavuhe.data.db.AppDatabase
 import dev.mark.knigavuhe.data.remote.Http
 import dev.mark.knigavuhe.data.remote.KnigavuheApi
+import dev.mark.knigavuhe.data.remote.OwnLibraryApi
 import dev.mark.knigavuhe.data.repo.BookRepository
 import dev.mark.knigavuhe.data.repo.Settings
 import dev.mark.knigavuhe.playback.PlaybackController
@@ -18,7 +19,8 @@ class AppContainer(context: Context) {
     val http: OkHttpClient = Http.client
     val db: AppDatabase = AppDatabase.get(appContext)
     val api = KnigavuheApi(http)
+    val ownApi = OwnLibraryApi(http)
     val settings = Settings(appContext)
-    val bookRepository = BookRepository(appContext, db, api)
+    val bookRepository = BookRepository(appContext, db, api, ownApi, settings)
     val playback = PlaybackController(appContext, bookRepository, appScope)
 }
