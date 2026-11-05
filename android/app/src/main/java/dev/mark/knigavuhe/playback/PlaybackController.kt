@@ -36,6 +36,23 @@ class PlaybackController(
     private val scope: CoroutineScope,
 ) {
     private val _state = MutableStateFlow(PlaybackUiState())
+
+    /** Синк своей библиотеки (OwnSync.sync(force=true)), ставит AppContainer: плеер ждёт неготовую главу. */
+    var requestOwnSync: (suspend () -> Unit)? = null
+    private var waitJob: kotlinx.coroutines.Job? = null
+
+    /** Ждём, пока следующая глава озвучится: синк раз в 20 с, пока висит «ещё озвучивается». */
+    private fun waitForNext() {
+        val bookId = _state.value.bookId ?: return
+        if (waitJob?.isActive == true) return
+        waitJob = scope.launch {
+            while (_state.value.bookId == bookId && _state.value.notice == NEXT_NOT_READY) {
+                runCatching { requestOwnSync?.invoke() }
+                if (_state.value.notice != NEXT_NOT_READY) break
+                kotlinx.coroutines.delay(WAIT_SYNC_MS)
+            }
+        }
+    }
     val state: StateFlow<PlaybackUiState> = _state.asStateFlow()
 
     /** Главы в плеере (у своей книги — только непрерывный блок готовых). */
@@ -96,6 +113,7 @@ class PlaybackController(
                 if (bookId != null && OwnIds.isOwn(bookId) && PlaylistRules.waitsForNext(allChapters, block)) {
                     // Своя книга: дальше глава ещё не озвучена — пауза в конце, книга не дочитана
                     _state.value = _state.value.copy(notice = NEXT_NOT_READY)
+                    waitForNext()
                 } else {
                     // Плейлист — это вся книга, поэтому STATE_ENDED означает, что она дослушана.
                     _state.value = _state.value.copy(finishedBookId = bookId)
@@ -214,6 +232,21 @@ class PlaybackController(
     }
 
     fun playPause() {
+        if (!player.isPlaying && _state.value.notice == NEXT_NOT_READY && !player.hasNextMediaItem()) {
+            // Ждали неготовую главу: спросить сервер сейчас, а не через 20 с
+            scope.launch {
+                runCatching { requestOwnSync?.invoke() }
+                withContext(Dispatchers.Main) {
+                    if (player.hasNextMediaItem()) {
+                        player.seekToNextMediaItem()
+                        startSessionHost()
+                        player.play()
+                    }
+                    pushState()
+                }
+            }
+            return
+        }
         if (player.isPlaying) {
             player.pause()
         } else {
@@ -281,6 +314,7 @@ class PlaybackController(
             val block = blockStart until blockStart + chapters.size
             if (bookId != null && OwnIds.isOwn(bookId) && PlaylistRules.waitsForNext(allChapters, block)) {
                 _state.value = _state.value.copy(notice = NEXT_NOT_READY)
+                waitForNext()
             }
         }
     }
@@ -440,6 +474,7 @@ class PlaybackController(
         const val SKIP_BACK_MS = 10_000L
         const val SKIP_FORWARD_MS = 30_000L
         const val NEXT_NOT_READY = "Следующая глава ещё озвучивается"
+        private const val WAIT_SYNC_MS = 20_000L
         const val CHAPTER_NOT_READY = "Глава ещё озвучивается"
 
         /**

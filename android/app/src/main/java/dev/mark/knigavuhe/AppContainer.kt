@@ -25,4 +25,8 @@ class AppContainer(context: Context) {
     val bookRepository = BookRepository(appContext, db, api, ownApi, settings)
     val playback = PlaybackController(appContext, bookRepository, appScope)
     val ownSync = OwnSync(appContext, db, bookRepository, settings, appScope) { playback.ownChaptersChanged() }
+
+    init {
+        playback.requestOwnSync = { ownSync.sync(force = true) }
+    }
 }
