@@ -83,7 +83,7 @@ fun LibraryScreen(
                 title = { Text("Моя библиотека") },
                 actions = {
                     IconButton(onClick = onOpenOwn) {
-                        Icon(Icons.Rounded.LibraryMusic, contentDescription = "Мои озвучки")
+                        Icon(Icons.Rounded.LibraryMusic, contentDescription = "Озвучки")
                     }
                     IconButton(onClick = onOpenFavorites) {
                         Icon(Icons.Rounded.Star, contentDescription = "Избранное")

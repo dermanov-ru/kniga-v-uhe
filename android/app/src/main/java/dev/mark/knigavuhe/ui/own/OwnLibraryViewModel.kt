@@ -20,6 +20,8 @@ data class OwnLibraryState(
     val error: String? = null,
     val busy: Set<String> = emptySet(),
     val message: String? = null,
+    /** Название библиотеки с сервера; пока не пришло — общее «Озвучки». */
+    val title: String? = null,
 )
 
 class OwnLibraryViewModel(private val container: AppContainer) : ViewModel() {
@@ -44,6 +46,7 @@ class OwnLibraryViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             // синк заводит книги в библиотеке приложения, список — витрина того, что на сервере
             container.ownSync.sync(force = true)
+            connection.value?.let { conn -> container.ownApi.title(conn)?.let { _state.value = _state.value.copy(title = it) } }
             runCatching { container.bookRepository.ownBooks() }
                 .onSuccess { _state.value = _state.value.copy(loading = false, books = it) }
                 .onFailure { _state.value = _state.value.copy(loading = false, error = it.message ?: "Не удалось загрузить") }

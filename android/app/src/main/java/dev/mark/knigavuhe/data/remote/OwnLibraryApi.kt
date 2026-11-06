@@ -90,6 +90,9 @@ data class OwnConnection(val baseUrl: String, val key: String) {
 
 class OwnLibraryException(val code: Int, message: String) : IOException(message)
 
+@kotlinx.serialization.Serializable
+data class OwnMe(val title: String? = null)
+
 class OwnLibraryApi(private val client: OkHttpClient = Http.client) {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true; coerceInputValues = true }
 
@@ -101,6 +104,11 @@ class OwnLibraryApi(private val client: OkHttpClient = Http.client) {
     /** all=true — все не снятые главы со статусами, ссылки только у готовых. */
     suspend fun manifest(conn: OwnConnection, bookId: String, all: Boolean = true): OwnBook = withContext(Dispatchers.IO) {
         parseManifest(get(conn, "/v1/library/books/$bookId/manifest" + if (all) "?all=1" else "")).let { it.copy(cover = it.cover?.let(conn::absolute)) }
+    }
+
+    /** Название библиотеки от сервера («Озвучки Марка»); старый сервер без поля — null. */
+    suspend fun title(conn: OwnConnection): String? = withContext(Dispatchers.IO) {
+        runCatching { json.decodeFromString<OwnMe>(get(conn, "/v1/library/me")).title }.getOrNull()
     }
 
     fun parseBooks(raw: String): List<OwnBook> = json.decodeFromString(raw)
@@ -117,8 +125,9 @@ class OwnLibraryApi(private val client: OkHttpClient = Http.client) {
             val body = response.body?.string().orEmpty()
             when (response.code) {
                 200 -> return body
-                401 -> throw OwnLibraryException(401, "Ключ библиотеки отозван — подключите телефон заново")
-                403, 404 -> throw OwnLibraryException(response.code, "Этот ключ не открывает библиотеку")
+                401 -> throw OwnLibraryException(401, "Доступ к библиотеке закрыт или телефон отключён. Скачанное осталось на телефоне.")
+                403 -> throw OwnLibraryException(403, "Доступ к библиотеке закрыт. Скачанное осталось на телефоне.")
+                404 -> throw OwnLibraryException(404, "Этот ключ не открывает библиотеку")
                 else -> throw OwnLibraryException(response.code, "Библиотека ответила ${response.code}")
             }
         }

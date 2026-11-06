@@ -56,6 +56,9 @@ import dev.mark.knigavuhe.util.formatDuration
  * «Мои озвучки»: книги, озвученные на своём сервере. Не подключено — экран подключения
  * (QR со страницы библиотеки открывает приложение сам, строку можно и вставить руками).
  */
+/** Страница библиотеки: вход, каталог, запрос доступа, подключение телефона. */
+private const val LIBRARY_SITE = "https://dermanov.ru/library/"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OwnLibraryScreen(
@@ -80,7 +83,7 @@ fun OwnLibraryScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Мои озвучки") },
+                title = { Text(state.title ?: "Озвучки") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Назад")
@@ -136,7 +139,7 @@ fun OwnLibraryScreen(
             if (!state.loading && state.error == null && state.books.isEmpty()) {
                 item {
                     Text(
-                        "На сервере пока нет книг. Загрузите FB2 на странице библиотеки.",
+                        "Готовых книг пока нет.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 24.dp),
@@ -163,13 +166,22 @@ fun OwnLibraryScreen(
 private fun ConnectPane(modifier: Modifier, onConnect: (String) -> Boolean) {
     var text by remember { mutableStateOf("") }
     var wrong by remember { mutableStateOf(false) }
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     Column(modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Библиотека не подключена", style = MaterialTheme.typography.titleMedium)
+        Text("Озвучки на dermanov.ru", style = MaterialTheme.typography.titleMedium)
         Text(
-            "Откройте страницу библиотеки, нажмите «Подключить телефон» и наведите камеру на QR — " +
-                "приложение откроется само. Или вставьте строку подключения сюда.",
+            "Книги, озвученные голосом. Войдите на сайте через Telegram — первые главы открыты сразу, " +
+                "целиком слушать можно по доступу. Когда доступ откроют, нажмите на сайте «Подключить телефон», " +
+                "потом «Открыть в приложении».",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Button(onClick = { uriHandler.openUri(LIBRARY_SITE) }) { Text("Открыть сайт") }
+        Text(
+            "Подключаете с компьютера — наведите камеру телефона на QR со страницы. Или вставьте строку подключения:",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 12.dp),
         )
         OutlinedTextField(
             value = text,
@@ -180,7 +192,7 @@ private fun ConnectPane(modifier: Modifier, onConnect: (String) -> Boolean) {
             modifier = Modifier.fillMaxWidth(),
             minLines = 2,
         )
-        Button(onClick = { wrong = !onConnect(text) }, enabled = text.isNotBlank()) { Text("Подключить") }
+        androidx.compose.material3.OutlinedButton(onClick = { wrong = !onConnect(text) }, enabled = text.isNotBlank()) { Text("Подключить") }
     }
 }
 
